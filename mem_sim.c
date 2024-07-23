@@ -84,8 +84,8 @@ void load_page(sim_database *mem_sim, int page_number) {
             for (int j = 0; j < (SWAP_SIZE / PAGE_SIZE); j++) {
                 lseek(mem_sim->swapfile_fd, PAGE_SIZE * j, SEEK_SET);
                 if (read(mem_sim->swapfile_fd, temp_buffer, PAGE_SIZE) == -1) {
-                    perror("ERR");
-                    // Handle error
+                    perror("READ");
+                    return;
                 }
                 char temp[PAGE_SIZE];
                 memset(temp, '0', PAGE_SIZE);
@@ -105,11 +105,11 @@ void load_page(sim_database *mem_sim, int page_number) {
 
         if (lseek(mem_sim->swapfile_fd, mem_sim->page_table[page_number].frame_swap * PAGE_SIZE, SEEK_SET) == -1) {
             perror("lseek error");
-            // Handle error
+            return;
         }
         if (read(mem_sim->swapfile_fd, mem_sim->main_memory + current_frame * PAGE_SIZE, PAGE_SIZE) == -1) {
             perror("read error");
-            // Handle error
+            return;
         }
         char empty_page[PAGE_SIZE];
         for (int i = 0; i < PAGE_SIZE; i++) {
@@ -122,11 +122,11 @@ void load_page(sim_database *mem_sim, int page_number) {
             // Load the page from the executable file
             if (lseek(mem_sim->program_fd, page_number * PAGE_SIZE, SEEK_SET) == -1) {
                 perror("lseek error");
-                // Handle error (e.g., exit program)
+                return;
             }
             if (read(mem_sim->program_fd, mem_sim->main_memory + current_frame * PAGE_SIZE, PAGE_SIZE) == -1) {
                 perror("read error");
-                // Handle error (e.g., exit program)
+                return;
             }
         } else {
             // Allocate a new page for heap, stack, or bss (read-write)
@@ -160,7 +160,7 @@ char load(sim_database* mem_sim, int address) {
     int offset = address & (PAGE_SIZE - 1);       // AND with PAGE_SIZE - 1
 
     if (page_number >= NUM_OF_PAGES || page_number < 0) {
-        fprintf(stderr, "Invalid address: %d\n", address);
+        // fprintf(stderr, "Invalid address: %d\n", address);
         return '\0';
     }
 
@@ -195,12 +195,12 @@ void store(sim_database* mem_sim, int address, char value) {
     int offset = address & (PAGE_SIZE - 1);       // AND with PAGE_SIZE - 1
 
     if (page_number >= NUM_OF_PAGES || page_number < 0) {
-        fprintf(stderr, "Invalid address: %d\n", address);
+        // fprintf(stderr, "Invalid address: %d\n", address);
         return;
     }
 
     if (mem_sim->page_table[page_number].P == 1) {
-        fprintf(stderr, "Write permission denied for page: %d\n", page_number);
+        // fprintf(stderr, "Write permission denied for page: %d\n", page_number);
         return;
     }
 
@@ -273,7 +273,9 @@ void print_page_table(sim_database* mem_sim) {
  * @param mem_sim The simulation database.
  */
 void clear_system(sim_database* mem_sim) {
-    close(mem_sim->program_fd);
-    close(mem_sim->swapfile_fd);
-    free(mem_sim);
+    if (mem_sim) {
+        close(mem_sim->program_fd);
+        close(mem_sim->swapfile_fd);
+        free(mem_sim);
+    }
 }

@@ -14,14 +14,14 @@
 #define MEMORY_SIZE 40
 #define SWAP_SIZE 200
 
-typedef struct {
+typedef struct page_descriptor{
     unsigned int V; // valid
     unsigned int D; // dirty
     unsigned int P; // permission
     unsigned int frame_swap; // frame or swap number
 } page_descriptor;
 
-typedef struct {
+typedef struct sim_database{
     page_descriptor page_table[NUM_OF_PAGES]; // page table
     int swapfile_fd; // swap file descriptor
     int program_fd; // executable file descriptor

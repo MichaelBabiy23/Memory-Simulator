@@ -1,119 +1,2451 @@
-/*
-#include <fcntl.h>
- #include <stdlib.h>
- #include <stdio.h>
- #include "mem_sim.h"
-
- int main(void) {
-     struct sim_database* mem_sim = init_system("exec_file", "swap_file"
-             ,40,40,120);
-     store(mem_sim, 70, 'b');
-    load(mem_sim, 20);
-
-    load(mem_sim, 33);
-     load(mem_sim, 42);
-     load(mem_sim, 51);
-     load(mem_sim, 60);
-//    store(mem_sim, 40, 'b');
-//    store(mem_sim, 50, 'c');
-//    store(mem_sim, 60, 'd');
-//     store(mem_sim, 70, 'e');
-//     store(mem_sim, 80, 'f');
-//     store(mem_sim, 90, 'z');
-//     printf("[%c]\n", load(mem_sim, 72));
-     //load(mem_sim, 70);
-
-     print_memory(mem_sim);
-     print_page_table(mem_sim);
-     print_swap(mem_sim);
-     //printf("%c\n",load(mem_sim, 17));
-     clear_system(mem_sim);
- }
-//
-*/
-#include <stdio.h>
-#include <stdlib.h>
+// JE
+#define _POSIX_C_SOURCE 200809L
 #include <unistd.h>
-#include <fcntl.h>
-#include <time.h>
+#include <sys/types.h>
+#include <stdio.h>
 #include "mem_sim.h"
-#include <sys/stat.h>
+#include <stdlib.h>
+#include <assert.h>
+#include <string.h>
 
-#define TEXT_SIZE 40
-#define EXEC_FILE "exec_file"
-#define SWAP_FILE "swap_file"
-#define EXEC_CONTENT "aaaaaaaabbbbbbbbccccccccddddddddeeeeeeeeffffffffgggggggghhhhhhhhiiiiiiiijjjjjjjj"
+#include <unistd.h>  // for lseek
+#include <fcntl.h>   // for open
+#include <stdlib.h>  // for exit
 
-// Initialize the executable file with given content
-void initialize_exec_file() {
-    int fd = open(EXEC_FILE, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR);
-    if (fd == -1) {
-        perror("Error opening executable file");
-        exit(EXIT_FAILURE);
-    }
-    if (write(fd, EXEC_CONTENT, 80) != 80) { // 80 bytes of data
-        perror("Error writing to executable file");
-        close(fd);
-        exit(EXIT_FAILURE);
-    }
-    close(fd);
-}
-
-// Perform random tests on the memory simulation system
-void random_tests(struct sim_database *mem_sim, int num_tests) {
-    int max_address = 200; // Assuming we are dealing with 100 addresses
-    srand(time(NULL));
-
-    for (int i = 0; i < num_tests; i++) {
-        int random_address = rand() % max_address;
-        char random_value = 'A' + (rand() % 26); // Random uppercase letter
-
-        // Perform store operation
-        printf("Test %d: Storing value %c at address %d\n", i+1, random_value, random_address);
-        store(mem_sim, random_address, random_value);
-
-        // Perform load operation and verify
-        char loaded_value = load(mem_sim, random_address);
-        printf("Test %d: Loaded value %c from address %d\n", i+1, loaded_value, random_address);
-
-        if (loaded_value != random_value) {
-            if (random_address < TEXT_SIZE) {
-                printf("Test %d: Can't store in address %d. Skipping to the next test...\n", i + 1, random_address);
-                continue;
-            }
-            printf("Test failed at iteration %d: expected %c, got %c\n", i+1, random_value, loaded_value);
-            exit(EXIT_FAILURE);
-        }
-
-        // Print current state of memory, swap file, and page table
-//        print_memory(mem_sim);
-//        print_swap(mem_sim);
-//        print_page_table(mem_sim);
-    }
-
-    printf("All random tests passed!\n");
-}
-
-int main() {
-    int num_tests;
-    struct sim_database *mem_sim;
-
-    // Initialize the exec file with given content
-    initialize_exec_file();
-
-    // Get the number of tests from the user
-    printf("Enter the number of random tests to perform: ");
-    scanf("%d", &num_tests);
-
-    // Initialize the memory simulation system
-    mem_sim = init_system(EXEC_FILE, SWAP_FILE, 40, 40, 120);
-
-    // Perform random tests
-    random_tests(mem_sim, num_tests);
-
-    // Clear the system resources
+sim_database* reset_system(struct sim_database *mem_sim) {
+    // Clear the system
     clear_system(mem_sim);
 
+    // Reinitialize the system
+    mem_sim = init_system("exec_file", "swap_file", 40, 40, 120);
+
+    printf("System reset completed.\n");
+
+    return mem_sim;
+}
+
+void run_tests(struct sim_database *mem_sim) {
+    char val;
+    char output[1024];
+    int test_passed = 1;
+
+    printf("\nRunning tests:\n");
+
+
+    // Test 1: Check initial memory state
+    printf("Test 1: Check initial memory state... ");
+    test_passed = 1;
+    for (int i = 0; i < MEMORY_SIZE; i++) {
+        if (mem_sim->main_memory[i] != '0') {
+            test_passed = 0;
+            break;
+        }
+    }
+    for (int i = 0; i < NUM_OF_PAGES; i++) {
+        if (mem_sim->page_table[i].V != 0 || mem_sim->page_table[i].D != 0 ||
+            mem_sim->page_table[i].P != (i < 5 ? 1 : 0) || mem_sim->page_table[i].frame_swap != -1) {
+            test_passed = 0;
+            break;
+        }
+    }
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    // Test 2: Check initial swap state
+    printf("Test 2: Check initial swap state... ");
+    test_passed = 1;
+    char swap_content[SWAP_SIZE];
+    lseek(mem_sim->swapfile_fd, 0, SEEK_SET);
+    read(mem_sim->swapfile_fd, swap_content, SWAP_SIZE);
+    for (int i = 0; i < SWAP_SIZE; i++) {
+        if (swap_content[i] != '0') {
+            test_passed = 0;
+            break;
+        }
+    }
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    // Test 3: Initialize system
+    printf("Test 3: Initialize system... ");
+    printf(mem_sim != NULL ? "PASSED\n" : "FAILED\n");
+
+    // Test 4: Load from text segment
+    printf("Test 4: Load from text segment... ");
+    val = load(mem_sim, 2);
+    test_passed = (val == 'a' && mem_sim->page_table[0].V == 1 && mem_sim->page_table[0].frame_swap == 0);
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    // Test 5: Load from data segment
+    printf("Test 5: Load from data segment... ");
+    val = load(mem_sim, 44);
+    test_passed = (val == 'f' && mem_sim->page_table[5].V == 1 && mem_sim->page_table[5].frame_swap == 1);
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    // Test 6: Store in writable page
+    printf("Test 6: Store in writable page... ");
+    store(mem_sim, 50, 'X');
+    val = load(mem_sim, 50);
+    test_passed = (val == 'X' && mem_sim->page_table[6].V == 1 && mem_sim->page_table[6].D == 1);
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    // Test 7: Attempt to write in read-only page
+    printf("Test 7: Attempt to write in read-only page... ");
+    store(mem_sim, 2, 'Z');
+    val = load(mem_sim, 2);
+    test_passed = (val == 'a');
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    // Test 8: Load from uninitialized page
+    printf("Test 8: Load from uninitialized page... ");
+    val = load(mem_sim, 80);
+    test_passed = (val == '0' && mem_sim->page_table[10].V == 1);
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    // Test 9: Store and load from heap
+    printf("Test 9: Store and load from heap... ");
+    store(mem_sim, 70, 'A');
+    val = load(mem_sim, 70);
+    test_passed = (val == 'A' && mem_sim->page_table[8].V == 1 && mem_sim->page_table[8].D == 1);
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    // Test 10: Check page table after operations
+    printf("Test 10: Check page table after operations... ");
+    test_passed = (mem_sim->page_table[0].V == 1 && mem_sim->page_table[5].V == 1 && mem_sim->page_table[8].V == 1);
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    // Reset system between tests
+    mem_sim = reset_system(mem_sim);
+
+    // Test 11: Load from boundary of two pages
+    printf("Test 11: Load from boundary of two pages... ");
+    val = load(mem_sim, 7);
+    test_passed = (val == 'a');
+    val = load(mem_sim, 8);
+    test_passed = test_passed && (val == 'b');
+    test_passed = test_passed && (mem_sim->page_table[0].V == 1) && (mem_sim->page_table[1].V == 1);
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    mem_sim = reset_system(mem_sim);
+
+    // Test 12: Attempt to access out of bounds address
+    printf("Test 12: Attempt to access out of bounds address... ");
+    val = load(mem_sim, 1000);
+    test_passed = (val == '\0');;
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    mem_sim = reset_system(mem_sim);
+
+    // Test 13: Load multiple pages
+    printf("Test 13: Load multiple pages... ");
+    load(mem_sim, 0);
+    load(mem_sim, 8);
+    load(mem_sim, 16);
+    test_passed = (mem_sim->page_table[0].V == 1) && (mem_sim->page_table[1].V == 1) && (mem_sim->page_table[2].V == 1);
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    mem_sim = reset_system(mem_sim);
+
+    // Test 14: Check page replacement
+    printf("Test 14: Check page replacement... ");
+    for (int i = 0; i < 6; i++) {
+        load(mem_sim, i * 8);
+    }
+    int swapped_out_page_found = 0;
+    for (int i = 0; i < 6; i++) {
+        if (mem_sim->page_table[i].V == 0) {
+            swapped_out_page_found = 1;
+            break;
+        }
+    }
+    test_passed = swapped_out_page_found;
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    mem_sim = reset_system(mem_sim);
+
+    // Test 15: Store in multiple pages
+    printf("Test 15: Store in multiple pages... ");
+    store(mem_sim, 42, 'X');
+    store(mem_sim, 50, 'Y');
+    store(mem_sim, 58, 'Z');
+    val = load(mem_sim, 42);
+    test_passed = (val == 'X');
+    val = load(mem_sim, 50);
+    test_passed = test_passed && (val == 'Y');
+    val = load(mem_sim, 58);
+    test_passed = test_passed && (val == 'Z');
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    mem_sim = reset_system(mem_sim);
+
+    // Test 16: Check dirty bit after store
+    printf("Test 16: Check dirty bit after store... ");
+    store(mem_sim, 80, 'W');
+    test_passed = (mem_sim->page_table[10].D == 1);
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    mem_sim = reset_system(mem_sim);
+
+    // Test 17: Check swap after page replacement
+    printf("Test 17: Check swap after page replacement... ");
+    for (int i = 5; i < 11; i++) {
+        store(mem_sim, i * PAGE_SIZE, 'F' + i - 5);
+    }
+    lseek(mem_sim->swapfile_fd, 0, SEEK_SET);
+    char swap_char;
+    read(mem_sim->swapfile_fd, &swap_char, 1);
+    test_passed = (swap_char == 'F');
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    mem_sim = reset_system(mem_sim);
+
+    // Test 18: Load from swapped out page
+    printf("Test 18: Load from swapped out page... ");
+    val = load(mem_sim, 0);
+    test_passed = (val == 'a');
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    mem_sim = reset_system(mem_sim);
+
+    // Test 19: Check page table after complex operations
+    printf("Test 19: Check page table after complex operations... ");
+    load(mem_sim, 0);
+    load(mem_sim, 44);
+    load(mem_sim, 80);
+    load(mem_sim, 124);
+    store(mem_sim, 50, 'X');
+    store(mem_sim, 70, 'A');
+    store(mem_sim, 130, 'B');
+    load(mem_sim, 160);
+    int valid_count = 0;
+    for (int i = 0; i < NUM_OF_PAGES; i++) {
+        if (mem_sim->page_table[i].V == 1) {
+            valid_count++;
+        }
+    }
+    test_passed = (valid_count <= MEMORY_SIZE / PAGE_SIZE);
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    mem_sim = reset_system(mem_sim);
+
+// Test 20: Stress test with many operations
+    printf("Test 20: Stress test with many operations... ");
+    for (int i = 0; i < 100; i++) {
+        if (i % 2 == 0) {
+            load(mem_sim, i * 4);
+        } else {
+            store(mem_sim, i * 4, 'X');
+        }
+    }
+
+// Check physical memory
+    test_passed = 1;
+    for (int i = 0; i < MEMORY_SIZE; i++) {
+        if (i % 8 == 4) {
+            if (mem_sim->main_memory[i] != 'X') {
+                test_passed = 0;
+                break;
+            }
+        } else {
+            if (mem_sim->main_memory[i] != '0') {
+                test_passed = 0;
+                break;
+            }
+        }
+    }
+
+// Check page table
+    if (test_passed) {
+        for (int i = 0; i < NUM_OF_PAGES; i++) {
+            if (i < 5) {
+                if (mem_sim->page_table[i].V != 0 || mem_sim->page_table[i].D != 0 ||
+                    mem_sim->page_table[i].P != 1 || mem_sim->page_table[i].frame_swap != -1) {
+                    test_passed = 0;
+                    break;
+                }
+            } else if (i < 20) {
+                if (mem_sim->page_table[i].V != 0 || mem_sim->page_table[i].D != 1 ||
+                    mem_sim->page_table[i].P != 0 || mem_sim->page_table[i].frame_swap != i - 5) {
+                    test_passed = 0;
+                    break;
+                }
+            } else if (i < 25) {
+                if (mem_sim->page_table[i].V != 1 || mem_sim->page_table[i].D != 1 ||
+                    mem_sim->page_table[i].P != 0 || mem_sim->page_table[i].frame_swap != i - 20) {
+                    test_passed = 0;
+                    break;
+                }
+            } else {
+                if (mem_sim->page_table[i].V != 0 || mem_sim->page_table[i].D != 0 ||
+                    mem_sim->page_table[i].P != 0 || mem_sim->page_table[i].frame_swap != -1) {
+                    test_passed = 0;
+                    break;
+                }
+            }
+        }
+    }
+
+// Check swap memory
+    if (test_passed) {
+        char swap_content[SWAP_SIZE];
+        lseek(mem_sim->swapfile_fd, 0, SEEK_SET);
+        read(mem_sim->swapfile_fd, swap_content, SWAP_SIZE);
+
+        for (int i = 0; i < 15; i++) {
+            for (int j = 0; j < 8; j++) {
+                if (j == 4) {
+                    if (swap_content[i*8 + j] != 'X') {
+                        test_passed = 0;
+                        break;
+                    }
+                } else if (i < 5) {
+                    if (swap_content[i*8 + j] != 'f' + i) {
+                        test_passed = 0;
+                        break;
+                    }
+                } else {
+                    if (swap_content[i*8 + j] != '0') {
+                        test_passed = 0;
+                        break;
+                    }
+                }
+            }
+            if (!test_passed) break;
+        }
+
+        for (int i = 15*8; i < SWAP_SIZE; i++) {
+            if (swap_content[i] != '0') {
+                test_passed = 0;
+                break;
+            }
+        }
+    }
+
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    mem_sim = reset_system(mem_sim);
+
+    // Test 21: Check store operations
+    printf("Test 21: Check store operations... ");
+    store(mem_sim, 65, 'A');
+    store(mem_sim, 57, 'B');
+    store(mem_sim, 49, 'C');
+    store(mem_sim, 41, 'D');
+    store(mem_sim, 78, 'E');
+    store(mem_sim, 100, 'F');
+    test_passed = (mem_sim->page_table[5].V == 1 && mem_sim->page_table[5].D == 1);
+    test_passed = test_passed && (mem_sim->page_table[6].V == 1 && mem_sim->page_table[6].D == 1);
+    test_passed = test_passed && (mem_sim->page_table[7].V == 1 && mem_sim->page_table[7].D == 1);
+    test_passed = test_passed && (mem_sim->page_table[8].V == 0 && mem_sim->page_table[8].D == 1);
+    test_passed = test_passed && (mem_sim->page_table[9].V == 1 && mem_sim->page_table[9].D == 1);
+    test_passed = test_passed && (mem_sim->page_table[12].V == 1 && mem_sim->page_table[12].D == 1);
+    printf(test_passed ? "PASSED\n" : "FAILED\n");
+
+    printf("\nAll tests completed.\n");
+}
+
+int main(int argc, char *argv[]) {
+    char val;
+    struct sim_database *mem_sim;
+    mem_sim = init_system ("exec_file", "swap_file" ,40,40,120);
+    run_tests(mem_sim);
+    clear_system(mem_sim);
     return 0;
 }
 
+// JE
+
+/* If you're encountering an error, you can add those lines after each failed test and compare your output to the following output:
+ * After each failed test and BEFORE the reset_system call, add the following lines:
+ * print_memory(mem_sim);
+    print_page_table(mem_sim);
+    print_swap(mem_sim);
+
+    Then, compare your output to the following output:
+    (Use CTRL+F to find the test number you're looking for)
+
+
+Test 1 - Expected output:
+
+Physical memory
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+Test 2 - Expected output:
+
+Physical memory
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+Test 3 - Expected output:
+
+Physical memory
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+Test 4 - Expected output:
+
+Physical memory
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[1]	[0]	[1]	[0]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+Test 5 - Expected output:
+
+Physical memory
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[1]	[0]	[1]	[0]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[1]	[0]	[0]	[1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+Test 6 - Expected output:
+
+Physical memory
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[g]
+[g]
+[X]
+[g]
+[g]
+[g]
+[g]
+[g]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[1]	[0]	[1]	[0]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[1]	[0]	[0]	[1]
+[1]	[1]	[0]	[2]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+Test 7 - Expected output:
+
+Physical memory
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[g]
+[g]
+[X]
+[g]
+[g]
+[g]
+[g]
+[g]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[1]	[0]	[1]	[0]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[1]	[0]	[0]	[1]
+[1]	[1]	[0]	[2]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+
+Test 8 - Expected output:
+
+Physical memory
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[g]
+[g]
+[X]
+[g]
+[g]
+[g]
+[g]
+[g]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[1]	[0]	[1]	[0]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[1]	[0]	[0]	[1]
+[1]	[1]	[0]	[2]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[1]	[0]	[0]	[3]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+
+Test 9 - Expected output:
+
+Physical memory
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[g]
+[g]
+[X]
+[g]
+[g]
+[g]
+[g]
+[g]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[i]
+[i]
+[i]
+[i]
+[i]
+[i]
+[A]
+[i]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[1]	[0]	[1]	[0]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[1]	[0]	[0]	[1]
+[1]	[1]	[0]	[2]
+[0]	[0]	[0]	[-1]
+[1]	[1]	[0]	[4]
+[0]	[0]	[0]	[-1]
+[1]	[0]	[0]	[3]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+
+Test 10 - Expected output:
+
+Physical memory
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[g]
+[g]
+[X]
+[g]
+[g]
+[g]
+[g]
+[g]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[i]
+[i]
+[i]
+[i]
+[i]
+[i]
+[A]
+[i]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[1]	[0]	[1]	[0]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[1]	[0]	[0]	[1]
+[1]	[1]	[0]	[2]
+[0]	[0]	[0]	[-1]
+[1]	[1]	[0]	[4]
+[0]	[0]	[0]	[-1]
+[1]	[0]	[0]	[3]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+
+Test 11 - Expected output:
+
+Physical memory
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[b]
+[b]
+[b]
+[b]
+[b]
+[b]
+[b]
+[b]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[1]	[0]	[1]	[0]
+[1]	[0]	[1]	[1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+Test 12 - Expected output:
+
+Physical memory
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+
+Test 13 - Expected output:
+
+Physical memory
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[b]
+[b]
+[b]
+[b]
+[b]
+[b]
+[b]
+[b]
+[c]
+[c]
+[c]
+[c]
+[c]
+[c]
+[c]
+[c]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[1]	[0]	[1]	[0]
+[1]	[0]	[1]	[1]
+[1]	[0]	[1]	[2]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+Test 14 - Expected output:
+
+Physical memory
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[b]
+[b]
+[b]
+[b]
+[b]
+[b]
+[b]
+[b]
+[c]
+[c]
+[c]
+[c]
+[c]
+[c]
+[c]
+[c]
+[d]
+[d]
+[d]
+[d]
+[d]
+[d]
+[d]
+[d]
+[e]
+[e]
+[e]
+[e]
+[e]
+[e]
+[e]
+[e]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[0]	[0]	[1]	[-1]
+[1]	[0]	[1]	[1]
+[1]	[0]	[1]	[2]
+[1]	[0]	[1]	[3]
+[1]	[0]	[1]	[4]
+[1]	[0]	[0]	[0]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+Test 15 - Expected output:
+
+Physical memory
+[f]
+[f]
+[X]
+[f]
+[f]
+[f]
+[f]
+[f]
+[g]
+[g]
+[Y]
+[g]
+[g]
+[g]
+[g]
+[g]
+[h]
+[h]
+[Z]
+[h]
+[h]
+[h]
+[h]
+[h]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[1]	[1]	[0]	[0]
+[1]	[1]	[0]	[1]
+[1]	[1]	[0]	[2]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+
+Test 16 - Expected output:
+
+Physical memory
+[W]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[1]	[1]	[0]	[0]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+Test 17 - Expected output:
+
+Physical memory
+[K]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[G]
+[g]
+[g]
+[g]
+[g]
+[g]
+[g]
+[g]
+[H]
+[h]
+[h]
+[h]
+[h]
+[h]
+[h]
+[h]
+[I]
+[i]
+[i]
+[i]
+[i]
+[i]
+[i]
+[i]
+[J]
+[j]
+[j]
+[j]
+[j]
+[j]
+[j]
+[j]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[1]	[0]	[0]
+[1]	[1]	[0]	[1]
+[1]	[1]	[0]	[2]
+[1]	[1]	[0]	[3]
+[1]	[1]	[0]	[4]
+[1]	[1]	[0]	[0]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[F]	[f]	[f]	[f]	[f]	[f]	[f]	[f]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+
+Test 18 - Expected output:
+
+Physical memory
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[a]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[1]	[0]	[1]	[0]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+Test 19 - Expected output:
+
+Physical memory
+[i]
+[i]
+[i]
+[i]
+[i]
+[i]
+[A]
+[i]
+[0]
+[0]
+[B]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[g]
+[g]
+[X]
+[g]
+[g]
+[g]
+[g]
+[g]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[0]	[-1]
+[1]	[1]	[0]	[4]
+[0]	[0]	[0]	[-1]
+[1]	[1]	[0]	[0]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[1]	[0]	[0]	[3]
+[1]	[1]	[0]	[1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[1]	[0]	[0]	[2]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+Test 20 - Expected output:
+
+Physical memory
+[0]
+[0]
+[0]
+[0]
+[X]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[X]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[X]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[X]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[0]
+[X]
+[0]
+[0]
+[0]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[1]	[0]	[0]
+[0]	[1]	[0]	[1]
+[0]	[1]	[0]	[2]
+[0]	[1]	[0]	[3]
+[0]	[1]	[0]	[4]
+[0]	[1]	[0]	[5]
+[0]	[1]	[0]	[6]
+[0]	[1]	[0]	[7]
+[0]	[1]	[0]	[8]
+[0]	[1]	[0]	[9]
+[0]	[1]	[0]	[10]
+[0]	[1]	[0]	[11]
+[0]	[1]	[0]	[12]
+[0]	[1]	[0]	[13]
+[0]	[1]	[0]	[14]
+[1]	[1]	[0]	[0]
+[1]	[1]	[0]	[1]
+[1]	[1]	[0]	[2]
+[1]	[1]	[0]	[3]
+[1]	[1]	[0]	[4]
+
+Swap memory
+[f]	[f]	[f]	[f]	[X]	[f]	[f]	[f]
+[g]	[g]	[g]	[g]	[X]	[g]	[g]	[g]
+[h]	[h]	[h]	[h]	[X]	[h]	[h]	[h]
+[i]	[i]	[i]	[i]	[X]	[i]	[i]	[i]
+[j]	[j]	[j]	[j]	[X]	[j]	[j]	[j]
+[0]	[0]	[0]	[0]	[X]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[X]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[X]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[X]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[X]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[X]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[X]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[X]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[X]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[X]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+
+
+Test 21 - Expected output:
+
+Physical memory
+[0]
+[0]
+[0]
+[0]
+[F]
+[0]
+[0]
+[0]
+[h]
+[B]
+[h]
+[h]
+[h]
+[h]
+[h]
+[h]
+[g]
+[C]
+[g]
+[g]
+[g]
+[g]
+[g]
+[g]
+[f]
+[D]
+[f]
+[f]
+[f]
+[f]
+[f]
+[f]
+[j]
+[j]
+[j]
+[j]
+[j]
+[j]
+[E]
+[j]
+
+Page table
+Valid	Dirty	Permission	Frame_swap
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[0]	[0]	[1]	[-1]
+[1]	[1]	[0]	[3]
+[1]	[1]	[0]	[2]
+[1]	[1]	[0]	[1]
+[0]	[1]	[0]	[0]
+[1]	[1]	[0]	[4]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[1]	[1]	[0]	[0]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+[0]	[0]	[0]	[-1]
+
+Swap memory
+[i]	[A]	[i]	[i]	[i]	[i]	[i]	[i]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]
+[0]	[0]	[0]	[0]	[0]	[0]	[0]	[0]		*/

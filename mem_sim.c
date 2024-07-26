@@ -96,7 +96,7 @@ void load_page(sim_database *mem_sim, int page_number) {
             }
             lseek(mem_sim->swapfile_fd, -PAGE_SIZE, SEEK_CUR);
             if (write(mem_sim->swapfile_fd, mem_sim->main_memory + current_frame * PAGE_SIZE, PAGE_SIZE) != PAGE_SIZE) {
-                perror("Error writing to swap file");
+                perror("Error writing");
                 return;
             }
             mem_sim->page_table[free_page].V = 0;
@@ -202,12 +202,12 @@ void store(sim_database* mem_sim, int address, char value) {
     int offset = address & (PAGE_SIZE - 1);       // AND with PAGE_SIZE - 1
 
     if (page_number >= NUM_OF_PAGES || page_number < 0) {
-        // fprintf(stderr, "Invalid address: %d\n", address);
+        fprintf(stderr, "ERR\n");
         return;
     }
 
     if (mem_sim->page_table[page_number].P == 1) {
-        // fprintf(stderr, "Write permission denied for page: %d\n", page_number);
+        fprintf(stderr, "ERR\n");
         return;
     }
 

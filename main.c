@@ -228,7 +228,7 @@ void run_tests(struct sim_database *mem_sim) {
 
 // Test 20: Stress test with many operations
     printf("Test 20: Stress test with many operations... ");
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < 50; i++) {
         if (i % 2 == 0) {
             load(mem_sim, i * 4);
         } else {

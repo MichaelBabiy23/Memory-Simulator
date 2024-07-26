@@ -68,14 +68,16 @@ sim_database* init_system(char exe_file_name[], char swap_file_name[], int text_
  */
 void load_page(sim_database *mem_sim, int page_number) {
     int current_frame = total_frames % (MEMORY_SIZE / PAGE_SIZE);
+    unsigned int free_page = 0;
+    int found = 0;
 
     // Check if a free frame exists
     if (total_frames >= MEMORY_SIZE / PAGE_SIZE) {
-        unsigned int free_page = 0;
         for (int k = 0; k < NUM_OF_PAGES; k++)
         {
             if (mem_sim->page_table[k].frame_swap == current_frame) {
                 free_page = k;
+                found = 1;
                 break;
             }
         }
@@ -97,6 +99,8 @@ void load_page(sim_database *mem_sim, int page_number) {
                 perror("Error writing to swap file");
                 return;
             }
+            mem_sim->page_table[free_page].V = 0;
+
         }
     }
     // Check if the page is in the swap file
@@ -128,10 +132,13 @@ void load_page(sim_database *mem_sim, int page_number) {
                 perror("read error");
                 return;
             }
+
         } else {
             // Allocate a new page for heap, stack, or bss (read-write)
             memset(mem_sim->main_memory + current_frame * PAGE_SIZE, '0', PAGE_SIZE);
         }
+        if (found == 1)
+            mem_sim->page_table[free_page].V = 0;
     }
 
     // Update the page table
@@ -160,7 +167,7 @@ char load(sim_database* mem_sim, int address) {
     int offset = address & (PAGE_SIZE - 1);       // AND with PAGE_SIZE - 1
 
     if (page_number >= NUM_OF_PAGES || page_number < 0) {
-        // fprintf(stderr, "Invalid address: %d\n", address);
+        fprintf(stderr, "ERR\n");
         return '\0';
     }
 

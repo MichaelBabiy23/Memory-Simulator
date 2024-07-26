@@ -1,36 +1,36 @@
-Memory simulator
+Memory Simulator
 Authored by Michael Babiy
 323073734
 
 ==Description==
+This program simulates how processors interact with memory (RAM) using a technique called "paging." Paging allows a program to run even when only part of it is loaded into memory. Virtual memory is divided into pages, which are brought into the main memory (RAM) as needed. The simulation involves two main operations: loading an address into the main memory and storing an address in the main memory using the hard disk.
 
-The program simulates how processors interact with memory (RAM) using a technique called "paging." Paging allows a program to run even when only part of it is loaded into memory. Virtual memory is divided into pages, which are brought into the main memory (RAM) as needed.
-The simulation involves two main operations: loading an address into the main memory and storing an address in the main memory using the hard disk.
+==Program Database==
+The program includes a database structure containing several sub-databases:
 
-Program DATABASE:
-struct database that contain sub databases, the sub databases are:
-1.page_table=array of structs, the page table serves as a table of contents ,we can get information about the RAM,address,and swap file.
-2.swapfile_fd= file descriptor, hold the access to the swap file. This swap file simulates the actual swap space on a hard disk.
-3.program_fd= file descriptor, hold the access to the executable file, this file simulate a process.
-4.main_memory=The main_memory is an array of characters with a size of 40, simulating the RAM (random access memory).
-two main functions:
-1.load- Receives a database_sim structure and a logical address, ensures the corresponding page is in the main memory, then accesses the physical address in memory and returns the character at that address, or '\0' if an error occurs.
-2.store- Ensures the page corresponding to the given logical address is in the main memory, then accesses the physical address and stores the given value at that address.
+page_table: An array of structs serving as a table of contents, providing information about the RAM, addresses, and the swap file.
+swapfile_fd: A file descriptor that holds access to the swap file, simulating the actual swap space on a hard disk.
+program_fd: A file descriptor that holds access to the executable file, simulating a process.
+main_memory: An array of characters with a size of 40, simulating the RAM (random access memory).
+
+==Main Functions==
+load: Receives a database_sim structure and a logical address, ensures the corresponding page is in the main memory, then accesses the physical address in memory and returns the character at that address, or '\0' if an error occurs.
+store: Ensures the page corresponding to the given logical address is in the main memory, then accesses the physical address and stores the given value at that address.
 
 ==Program Files==
-mem_sim.c - the file contains the implementation for the pogram
-mem_sim.h - an header file, contains structs, and declerations of the functions.
-main.c - contains a simple tester.
-Run_me.sh - to compile and run the program.
+mem_sim.c: Contains the implementation of the program.
+mem_sim.h: A header file containing structs and function declarations.
+main.c: Contains a simple tester.
+Run_me.sh: A script to compile and run the program.
 
-==How to compile and run?==
-run: ./Run_me.sh
+==How to Compile and Run==
+Run: ./Run_me.sh
 
-==Input:==
-no input
+==Input==
+No input
 
-==Output:==
-main memory (RAM)
-swap file
-page table
-character (that the load function returns)
+==Output==
+Main memory (RAM)
+Swap file
+Page table
+Character (that the load function returns)

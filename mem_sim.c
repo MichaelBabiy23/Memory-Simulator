@@ -26,7 +26,7 @@ sim_database* init_system(char exe_file_name[], char swap_file_name[], int text_
         return NULL;
     }
 
-    mem_sim->swapfile_fd = open(swap_file_name, O_RDWR | O_CREAT | O_TRUNC);
+    mem_sim->swapfile_fd = open(swap_file_name, O_RDWR | O_CREAT | O_TRUNC, 0644);
     if (mem_sim->swapfile_fd < 0) {
         perror("Failed to open swap file");
         close(mem_sim->program_fd);
@@ -36,12 +36,18 @@ sim_database* init_system(char exe_file_name[], char swap_file_name[], int text_
 
     // Initialize swap file with empty pages
     char empty_page[PAGE_SIZE];
-    for (int i = 0; i < PAGE_SIZE; i++) {
-        empty_page[i] = '0';
-    }
+    memset(empty_page, '0', PAGE_SIZE); // <-- this line was changed for clearer initialization
+
     for (int i = 0; i < SWAP_SIZE / PAGE_SIZE; i++) {
-        write(mem_sim->swapfile_fd, empty_page, PAGE_SIZE);
+        if (write(mem_sim->swapfile_fd, empty_page, PAGE_SIZE) != PAGE_SIZE) {
+            perror("Failed to initialize swap file with empty pages");
+            close(mem_sim->program_fd); // <-- this line was changed for better resource management in case of an error
+            close(mem_sim->swapfile_fd); // <-- this line was changed for better resource management in case of an error
+            free(mem_sim); // <-- this line was changed for better resource management in case of an error
+            return NULL;
+        }
     }
+
 
     mem_sim->text_size = text_size;
     mem_sim->data_size = data_size;
@@ -55,7 +61,7 @@ sim_database* init_system(char exe_file_name[], char swap_file_name[], int text_
         mem_sim->page_table[i].P = (i < text_size / PAGE_SIZE) ? 1 : 0;
         mem_sim->page_table[i].frame_swap = -1;
     }
-
+    total_frames = 0;
     return mem_sim;
 }
 
@@ -75,7 +81,7 @@ void load_page(sim_database *mem_sim, int page_number) {
     if (total_frames >= MEMORY_SIZE / PAGE_SIZE) {
         for (int k = 0; k < NUM_OF_PAGES; k++)
         {
-            if (mem_sim->page_table[k].frame_swap == current_frame) {
+            if (mem_sim->page_table[k].frame_swap == current_frame && mem_sim->page_table[k].V == 1) {
                 free_page = k;
                 found = 1;
                 break;
@@ -83,6 +89,7 @@ void load_page(sim_database *mem_sim, int page_number) {
         }
         if (mem_sim->page_table[free_page].D) { // If the page is dirty, write it to the swap file
             char temp_buffer[PAGE_SIZE];
+            int swap_index = -1;
             for (int j = 0; j < (SWAP_SIZE / PAGE_SIZE); j++) {
                 lseek(mem_sim->swapfile_fd, PAGE_SIZE * j, SEEK_SET);
                 if (read(mem_sim->swapfile_fd, temp_buffer, PAGE_SIZE) == -1) {
@@ -91,16 +98,21 @@ void load_page(sim_database *mem_sim, int page_number) {
                 }
                 char temp[PAGE_SIZE];
                 memset(temp, '0', PAGE_SIZE);
-                if (strncmp(temp_buffer, temp, PAGE_SIZE) == 0)
+                if (strncmp(temp_buffer, temp, PAGE_SIZE) == 0) {
+                    swap_index = j;
+                    lseek(mem_sim->swapfile_fd, -PAGE_SIZE, SEEK_CUR);
                     break;
+                }
             }
-            lseek(mem_sim->swapfile_fd, -PAGE_SIZE, SEEK_CUR);
+            if (swap_index == -1) {
+                perror("No empty swap space found");
+                return;
+            }
             if (write(mem_sim->swapfile_fd, mem_sim->main_memory + current_frame * PAGE_SIZE, PAGE_SIZE) != PAGE_SIZE) {
                 perror("Error writing");
                 return;
             }
-            mem_sim->page_table[free_page].V = 0;
-
+            mem_sim->page_table[free_page].frame_swap = swap_index; // <-- this line was changed for updating frame_swap correctly
         }
     }
     // Check if the page is in the swap file
@@ -137,10 +149,13 @@ void load_page(sim_database *mem_sim, int page_number) {
             // Allocate a new page for heap, stack, or bss (read-write)
             memset(mem_sim->main_memory + current_frame * PAGE_SIZE, '0', PAGE_SIZE);
         }
-        if (found == 1)
-            mem_sim->page_table[free_page].V = 0;
-    }
 
+    }
+    if (found == 1) {
+        mem_sim->page_table[free_page].V = 0;
+        if (mem_sim->page_table[free_page].D == 0)
+            mem_sim->page_table[free_page].frame_swap = -1;
+    }
     // Update the page table
     mem_sim->page_table[page_number].V = 1;
     mem_sim->page_table[page_number].frame_swap = current_frame;
@@ -171,7 +186,7 @@ char load(sim_database* mem_sim, int address) {
         return '\0';
     }
 
-    // Check if the page is valid
+    // Check if the page is not valid
     if (!mem_sim->page_table[page_number].V) {
         load_page(mem_sim, page_number);
     }
@@ -211,10 +226,11 @@ void store(sim_database* mem_sim, int address, char value) {
         return;
     }
 
-    // Check if the page is valid
+    // Check if not the page is valid
     if (!mem_sim->page_table[page_number].V) {
         load_page(mem_sim, page_number);
     }
+
 
     // Get the physical address
     int physical_address = mem_sim->page_table[page_number].frame_swap * PAGE_SIZE + offset;
